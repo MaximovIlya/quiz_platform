@@ -1,0 +1,116 @@
+\documentclass{style} % Use the custom style
+
+\pretolerance=10000
+\tolerance=2000
+
+\hypersetup{
+  colorlinks=true,
+  urlcolor=black,
+  linkcolor=black
+}
+
+\usepackage[left=0.4 in,top=0.4in,right=0.4 in,bottom=0.4in]{geometry} % Document margins
+\newcommand{\tab}[1]{\hspace{.2667\textwidth}\rlap{#1}}
+\newcommand{\itab}[1]{\hspace{0em}\rlap{#1}}
+\name{Максимов Илья}
+
+\address{
+    \href{https://t.me/ilyhamaks}{t.me/ilyhamaks} \\
+    \href{https://github.com/MaximovIlya}{github.com/MaximovIlya} \\
+    \href{mailto:dilershina@gmail.com}{dilershina@gmail.com} 
+}
+
+\begin{document}
+
+%----------------------------------------------------------------------------------------
+%	OBJECTIVE
+%----------------------------------------------------------------------------------------
+
+%----------------------------------------------------------------------------------------
+%	EDUCATION SECTION
+%----------------------------------------------------------------------------------------
+
+\begin{rSection}{Образование}
+
+    {\bf Бакалавр}, Университет Иннополис \hfill {2023 - 2027}\\
+    Искусственный Интеллект и Анализ Данных\\\\
+    Факультет компьютерных и инженерных наук
+
+\end{rSection}
+
+%----------------------------------------------------------------------------------------
+%	SKILLS SECTION
+%----------------------------------------------------------------------------------------
+
+\begin{rSection}{Навыки и умения}
+
+\begin{itemize}
+    \itemsep -3pt {}
+     \item Языки программирования: Go, Python, Java, Dart, JavaScript
+     \item Фреймворки: Flutter, Next.js, Node.js
+     \item Инструменты: Docker, Git, CI/CD,  Swagger
+     \item Базы Данных: PostgreSQL, SQLite
+     \item Технологии: REST API, WebSocket, JWT, Clean Architecture, BloC
+     \item Иностранный язык: английский (B2)
+\end{itemize}
+
+\end{rSection}
+
+%----------------------------------------------------------------------------------------
+%	PROJECTS SECTION
+%----------------------------------------------------------------------------------------
+
+\begin{rSection}{Проекты}
+
+\begin{itemize}
+    \itemsep -3pt {}
+     \item \href{https://github.com/MaximovIlya/chat_app.git}{\textbf{Chat App}}: кросс-платформенный мессенджер (Android, iOS, Web, Desktop). Backend на Go/Fiber — REST API + WebSocket для real-time сообщений, JWT + bcrypt, PostgreSQL 17/pgx/sqlc, Swagger. Frontend на Flutter: Clean Architecture, BLoC, socket\_io\_client, Flutter SecureStorage.
+     \item \href{https://github.com/MaximovIlya/tender_bot_go}{\textbf{Tender Bot}}: Telegram-бот на Go для управления тендерами по модели голландского аукциона. Три роли: организатор, поставщик, администратор. Автоматические уведомления через cron, деплой в Docker на Amvera.tech. Stack: telebot.v3, PostgreSQL/pgx/sqlc, robfig/cron.
+     \item \href{https://github.com/OpenEventsMap/OpenEventsBackend}{\textbf{Open Events}}: платформа для поиска и создания публичных мероприятий на интерактивной карте. Backend на Go/Fiber — REST API + WebSocket-чат, JWT, CRUD событий с геокоординатами, управление участниками, cron-очистка завершённых событий. Stack: PostgreSQL 15/pgx/sqlc, golang-migrate, Swagger, Docker, Amvera.
+     \item \href{https://github.com/IU-Capstone-Project-2025/Looki}{\textbf{Looki}}: мобильное приложение для виртуальной примерки одежды. Frontend на Flutter: авторизация, параметры тела, каталог коллекций, примерка одежды на 3D-модели, загрузка фото. 
+\end{itemize}
+
+\end{rSection}
+
+%----------------------------------------------------------------------------------------
+%	HACKATHONS SECTION
+%----------------------------------------------------------------------------------------
+
+\begin{rSection}{Практика}
+
+   
+    VK Practice \hfill \hfill Май 2026 - Июль 2026\
+    \begin{itemize}
+        \itemsep -3pt {}
+        \item Разработал веб-приложение для проведения квизов в реальном времени: авторизация с ролями (организатор/участник), конструктор квизов, live-сессии с подключением по коду комнаты и лидербордом.
+        \item Frontend: Next.js 14 (App Router), TypeScript, Tailwind CSS, Socket.IO client, NextAuth.js.
+        \item Backend: Next.js API Routes, Socket.IO server, PostgreSQL, Prisma ORM.
+        \item \href{https://github.com/MaximovIlya/vk_practice_project}{Репозиторий} \quad \href{https://drive.google.com/file/d/1UOm4LQo9R1axcW96MlJNprpl17DQTAPg/view?usp=sharing}{Сертификат}
+    \end{itemize}
+
+    Курс <<Системное программирование>>, VK Education \hfill 2026\\
+    \begin{itemize}
+        \itemsep -3pt {}
+        \item Темы: ядро Linux, шедулинг процессов, процесс и его ресурсы, системные вызовы, устройство памяти, сигналы и прерывания, файловая система, потоки, IPC, сеть, пользователи, сессии, права доступа.
+        \item \href{СЕРТИФИКАТ_ССЫЛКА}{Сертификат}
+    \end{itemize}
+
+\end{rSection}
+
+\begin{rSection}{Хакатоны}
+\vspace{-1.25em}
+\item \textbf{Хакатон <<блокчейн разработка>> БАШНЯ × Singularity} {\href{https://github.com/MaximovIlya/singularity}{(repo)}}
+\begin{itemize}
+    \itemsep -3pt {}
+     \item Полнофункциональная DeFi-платформа, где кредиторы получают доход от предоставления ликвидности, а заёмщики — доступ к кредитам под залог криптоактивов, с автоматическим управлением рисками и ставками.
+\end{itemize}
+
+\item \textbf{EasyA × Algorand London Hackathon}
+\begin{itemize}
+    \itemsep -3pt {}
+     \item Оптимизированная платформа для выпуска NFT-коллекций, позволяющая создателям эффективно развертывать токены с кастомизируемыми параметрами при минимальных затратах и максимальной скорости.
+\end{itemize}
+
+\end{rSection}
+
+\end{document}
