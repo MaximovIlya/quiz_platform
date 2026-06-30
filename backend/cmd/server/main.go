@@ -33,12 +33,12 @@ func main() {
 		log.Fatalf("jwt manager: %v", err)
 	}
 
-	// Services
+	
 	authSvc := service.NewAuthService(store, jwtManager)
 	quizSvc := service.NewQuizService(store)
 	sessSvc := service.NewSessionService(store)
 
-	// Handlers
+	
 	authH := handler.NewAuthHandler(authSvc)
 	quizH := handler.NewQuizHandler(quizSvc)
 	sessH := handler.NewSessionHandler(sessSvc)
@@ -62,7 +62,7 @@ func main() {
 
 	api := app.Group("/api/v1")
 
-	// Auth (публичные)
+	
 	authR := api.Group("/auth")
 	authR.Post("/register", authH.Register)
 	authR.Post("/login", authH.Login)
@@ -70,10 +70,11 @@ func main() {
 	authR.Post("/forgot-password", authH.ForgotPassword)
 	authR.Post("/reset-password", authH.ResetPassword)
 
-	// Auth (защищённые)
+	
+	authR.Get("/me", middleware.Auth(jwtManager), authH.Me)
 	authR.Post("/select-role", middleware.Auth(jwtManager), authH.SelectRole)
 
-	// Quiz (только организатор)
+	
 	quizR := api.Group("/quiz", middleware.Auth(jwtManager), middleware.RequireRole(db.RoleORGANIZER))
 	quizR.Get("/", quizH.ListMine)
 	quizR.Post("/", quizH.Create)
@@ -86,12 +87,13 @@ func main() {
 	quizR.Post("/:id/session", sessH.GetOrCreate)
 	quizR.Get("/:id/session", sessH.Get)
 	quizR.Delete("/:id/session", sessH.Delete)
+	quizR.Get("/:id/history", playH.GetQuizHistory)
 
-	// Play (участник)
+
 	api.Get("/play/:code", middleware.Auth(jwtManager), playH.JoinByCode)
 	api.Get("/results/:sessionId", middleware.Auth(jwtManager), playH.GetResults)
 
-	// WebSocket
+	
 	hub := ws.NewHub(store)
 	go hub.Run()
 	app.Get("/ws", ws.Upgrade, ws.Handler(hub, jwtManager))

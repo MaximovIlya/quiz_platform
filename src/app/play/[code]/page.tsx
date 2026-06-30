@@ -2,10 +2,10 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { useSession } from "next-auth/react";
+import { useAuth } from "@/context/auth-context";
+import { apiFetch, getAccessToken } from "@/lib/api";
+import { connectWS, onWS, offWS, sendWS, isConnectedWS } from "@/lib/ws";
 import Link from "next/link";
-import { getSocket } from "@/lib/socket";
-import type { AnswerVotes } from "@/types/socket";
 import { plural } from "@/lib/plural";
 
 type Answer      = { id: string; text: string };
@@ -33,7 +33,7 @@ function initials(name: string) {
 
 export default function PlayPage() {
   const params           = useParams<{ code: string }>();
-  const { data: auth }   = useSession();
+  const { user }         = useAuth();
   const router           = useRouter();
 
   const [phase,        setPhase]        = useState<Phase>("LOADING");
@@ -42,7 +42,6 @@ export default function PlayPage() {
   const [qIdx,         setQIdx]         = useState(0);
   const [selectedIds,  setSelectedIds]  = useState<string[]>([]);
   const [submitted,    setSubmitted]    = useState(false);
-  const [,             setVotes]        = useState<AnswerVotes>({});
   const [correctIds,   setCorrectIds]   = useState<string[]>([]);
   const [timeLeft,     setTimeLeft]     = useState(0);
   const [players,      setPlayers]      = useState<{ userId: string; name: string; score: number }[]>([]);
@@ -50,9 +49,9 @@ export default function PlayPage() {
   const [correctCount, setCorrectCount] = useState(0);
   const [answerTimes,  setAnswerTimes]  = useState<number[]>([]);
   const [bestStreak,   setBestStreak]   = useState(0);
-  const [roundPoints,  setRoundPoints]  = useState(0); // points earned on the current question
-  const [penaltyPoints, setPenaltyPoints] = useState(0); // points lost due to wrong selections (MULTIPLE)
-  const [isLastReveal, setIsLastReveal] = useState(false); // reveal shown is for the final question
+  const [roundPoints,  setRoundPoints]  = useState(0);
+  const [penaltyPoints, setPenaltyPoints] = useState(0);
+  const [isLastReveal, setIsLastReveal] = useState(false);
   const streakRef = useRef(0);
 
   const timerRef      = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -60,8 +59,8 @@ export default function PlayPage() {
 
   useEffect(() => { selectedRef.current = selectedIds; }, [selectedIds]);
 
-  const myId    = auth?.user?.id;
-  const myName  = auth?.user?.name ?? "Вы";
+  const myId    = user?.id;
+  const myName  = user?.name ?? "Вы";
   const myScore = players.find(p => p.userId === myId)?.score ?? 0;
   const myRank  = (() => { const i = players.findIndex(p => p.userId === myId); return i >= 0 ? i + 1 : 0; })();
 
@@ -71,56 +70,81 @@ export default function PlayPage() {
     selectedRef.current.every(id => correctIds.includes(id)) &&
     correctIds.every(id => selectedRef.current.includes(id));
 
-  // Partial: earned some points but not the full amount (only possible for MULTIPLE questions)
   const isPartial = !isCorrect && roundPoints > 0;
 
-  // Load session
+  // Load session via Go backend
   useEffect(() => {
     if (!params.code) return;
-    fetch(`/api/play/${params.code}`)
+    apiFetch(`/play/${params.code}`)
       .then(r => r.json())
       .then(data => {
         if (data.error) { setError(data.error); return; }
-        setQuizSession(data.session);
-        setQuiz(data.quiz);
-        if (data.session.status === "FINISHED") setPhase("FINISHED");
-        else if (data.session.status === "ACTIVE") setPhase("LOADING"); // wait for socket to restore state
+        // Backend returns: { session: {id, roomCode, status,...}, quiz: {...}, questions: [...], hostName }
+        const sess: SessionData = {
+          id: data.session.id,
+          roomCode: data.session.roomCode,
+          status: data.session.status,
+        };
+        const q: QuizData = {
+          ...data.quiz,
+          hostName: data.hostName ?? "",
+          questions: (data.questions ?? []).map((qq: { id: string; text: string; type: string; timeLimit: number; points: number; answers: Answer[]; imageUrl?: string | null }) => ({
+            id: qq.id,
+            text: qq.text,
+            type: qq.type,
+            timeLimit: qq.timeLimit,
+            points: qq.points,
+            answers: qq.answers,
+            imageUrl: qq.imageUrl,
+          })),
+        };
+        setQuizSession(sess);
+        setQuiz(q);
+        if (sess.status === "FINISHED") setPhase("FINISHED");
+        else if (sess.status === "ACTIVE") setPhase("LOADING");
         else setPhase("WAITING");
       })
       .catch(() => setError("Не удалось подключиться к комнате"));
   }, [params.code]);
 
-  // Socket
+  // WebSocket
   useEffect(() => {
-    if (!quizSession || !auth?.user) return;
-    const socket = getSocket();
-    const userId = auth.user.id;
-    const name   = auth.user.name ?? "Аноним";
+    if (!quizSession || !user) return;
+    const token = getAccessToken();
+    if (!token) return;
 
-    const doJoin = () => socket.emit("join-room", { roomCode: quizSession.roomCode, userId, name });
-    // Use `on` (not `once`) so that every reconnect re-joins the room.
-    // The server's join-room handler restores current question state on rejoin.
-    socket.on("connect", doJoin);
-    if (socket.connected) doJoin();
+    connectWS(token);
 
-    socket.on("error", msg => setError(msg));
+    const userId = user.id;
+    const name   = user.name ?? "Аноним";
 
-    socket.on("player-joined", player =>
+    const doJoin = () => sendWS("join-room", { roomCode: quizSession.roomCode, userId, name });
+
+    const onConnect = () => doJoin();
+    onWS("connect", onConnect);
+    if (isConnectedWS()) doJoin();
+
+    const onError = (msg: unknown) => setError(String(msg));
+    onWS("error", onError);
+
+    const onPlayerJoined = (player: { userId: string; name: string; score: number }) =>
       setPlayers(prev => prev.find(p => p.userId === player.userId)
-        ? prev : [...prev, { userId: player.userId, name: player.name, score: player.score }])
-    );
-    socket.on("player-left", uid =>
-      setPlayers(prev => prev.filter(p => p.userId !== uid))
-    );
+        ? prev : [...prev, { userId: player.userId, name: player.name, score: player.score }]);
+    onWS("player-joined", onPlayerJoined);
 
-    socket.on("quiz-started", ({ questionIndex }) => {
-      setQIdx(questionIndex); setSelectedIds([]); setSubmitted(false);
-      setVotes({}); setCorrectIds([]); setRoundPoints(0); setPenaltyPoints(0); setPhase("ACTIVE");
-    });
+    const onPlayerLeft = (uid: unknown) =>
+      setPlayers(prev => prev.filter(p => p.userId !== uid));
+    onWS("player-left", onPlayerLeft);
 
-    socket.on("question-started", ({ questionIndex, endsAt }) => {
+    const onQuizStarted = ({ questionIndex }: { questionIndex: number }) => {
       setQIdx(questionIndex); setSelectedIds([]); setSubmitted(false);
-      setVotes({}); setCorrectIds([]); setRoundPoints(0); setPenaltyPoints(0); setPhase("ACTIVE");
+      setCorrectIds([]); setRoundPoints(0); setPenaltyPoints(0); setPhase("ACTIVE");
+    };
+    onWS("quiz-started", onQuizStarted);
+
+    const onQuestionStarted = ({ questionIndex, endsAt }: { questionIndex: number; endsAt: number }) => {
+      setQIdx(questionIndex); setSelectedIds([]); setSubmitted(false);
+      setCorrectIds([]); setRoundPoints(0); setPenaltyPoints(0); setPhase("ACTIVE");
       const tick = () => {
         const left = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
         setTimeLeft(left);
@@ -129,21 +153,20 @@ export default function PlayPage() {
       tick();
       if (timerRef.current) clearInterval(timerRef.current);
       timerRef.current = setInterval(tick, 250);
-    });
+    };
+    onWS("question-started", onQuestionStarted);
 
-    socket.on("answer-received", ({ votes: v }) => setVotes(v));
-
-    socket.on("answer-result", ({ points, penaltyPoints: penalty }) => {
+    const onAnswerResult = ({ points, penaltyPoints: penalty }: { points: number; penaltyPoints?: number }) => {
       setRoundPoints(points);
       setPenaltyPoints(penalty ?? 0);
-    });
+    };
+    onWS("answer-result", onAnswerResult);
 
-    socket.on("question-ended", ({ correctAnswerIds, votes: v, questionIndex, isLast }) => {
+    const onQuestionEnded = ({ correctAnswerIds, questionIndex, isLast }: { correctAnswerIds: string[]; votes: unknown; questionIndex?: number; isLast?: boolean }) => {
       if (questionIndex !== undefined) setQIdx(questionIndex);
       setPhase("REVEAL");
       setIsLastReveal(!!isLast);
       setCorrectIds(correctAnswerIds);
-      setVotes(v);
       if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
       const sel = selectedRef.current;
       const wasCorrect = sel.length > 0 &&
@@ -156,63 +179,62 @@ export default function PlayPage() {
       } else {
         streakRef.current = 0;
       }
-    });
+    };
+    onWS("question-ended", onQuestionEnded);
 
-    socket.on("score-update", p =>
-      setPlayers(p.map(pl => ({ userId: pl.userId, name: pl.name, score: pl.score })))
-    );
-    socket.on("quiz-finished", p => {
+    const onScoreUpdate = (p: { userId: string; name: string; score: number }[]) =>
+      setPlayers(p.map(pl => ({ userId: pl.userId, name: pl.name, score: pl.score })));
+    onWS("score-update", onScoreUpdate);
+
+    const onQuizFinished = (p: { userId: string; name: string; score: number }[]) => {
       setPlayers(p.map(pl => ({ userId: pl.userId, name: pl.name, score: pl.score })));
       setPhase("FINISHED");
-      // The final question skips the reveal step that normally updates local
-      // stats, so pull the authoritative per-question correctness for the recap.
-      fetch(`/api/results/${quizSession.id}`)
+      apiFetch(`/results/${quizSession.id}`)
         .then(r => r.json())
         .then(d => {
           const me = d?.leaderboard?.find((e: { userId: string }) => e.userId === userId);
           if (me && typeof me.correct === "number") setCorrectCount(me.correct);
         })
         .catch(() => {});
-    });
+    };
+    onWS("quiz-finished", onQuizFinished);
 
-    socket.on("session-cancelled", () => setPhase("CANCELLED"));
+    const onCancelled = () => setPhase("CANCELLED");
+    onWS("session-cancelled", onCancelled);
 
     return () => {
-      socket.off("connect", doJoin);
-      socket.off("error"); socket.off("player-joined"); socket.off("player-left");
-      socket.off("quiz-started"); socket.off("question-started");
-      socket.off("answer-received"); socket.off("answer-result"); socket.off("question-ended");
-      socket.off("score-update"); socket.off("quiz-finished"); socket.off("session-cancelled");
+      offWS("connect", onConnect);
+      offWS("error", onError); offWS("player-joined", onPlayerJoined); offWS("player-left", onPlayerLeft);
+      offWS("quiz-started", onQuizStarted); offWS("question-started", onQuestionStarted);
+      offWS("answer-result", onAnswerResult); offWS("question-ended", onQuestionEnded);
+      offWS("score-update", onScoreUpdate); offWS("quiz-finished", onQuizFinished);
+      offWS("session-cancelled", onCancelled);
       if (timerRef.current) clearInterval(timerRef.current);
-      // Don't destroy the socket on cleanup — keep it alive so the player can
-      // reconnect quickly after pressing browser back/forward.
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [quizSession?.id, auth?.user?.id]);
+  }, [quizSession?.id, user?.id]);
 
-  // Re-join the room whenever the page becomes visible again (browser back button,
-  // tab switch, app switch). The server's join-room handler is idempotent and will
-  // restore the current question state.
+  // Re-join on visibility change
   useEffect(() => {
-    if (!quizSession || !auth?.user) return;
-    const uid = auth.user.id;
-    const uname = auth.user.name ?? "Аноним";
+    if (!quizSession || !user) return;
+    const uid = user.id;
+    const uname = user.name ?? "Аноним";
     const roomCode = quizSession.roomCode;
 
     const onVisible = () => {
       if (document.visibilityState !== "visible") return;
-      const s = getSocket();
-      if (s.connected) {
-        s.emit("join-room", { roomCode, userId: uid, name: uname });
+      if (isConnectedWS()) {
+        sendWS("join-room", { roomCode, userId: uid, name: uname });
       } else {
-        s.once("connect", () => s.emit("join-room", { roomCode, userId: uid, name: uname }));
+        const h = () => sendWS("join-room", { roomCode, userId: uid, name: uname });
+        onWS("connect", h);
       }
     };
 
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [quizSession?.id, auth?.user?.id]);
+  }, [quizSession?.id, user?.id]);
 
   const toggleAnswer = useCallback((id: string) => {
     if (submitted || phase !== "ACTIVE") return;
@@ -221,17 +243,15 @@ export default function PlayPage() {
   }, [submitted, phase, currentQuestion?.type]);
 
   const submitAnswer = useCallback(() => {
-    if (!quizSession || !currentQuestion || !auth?.user || submitted || selectedIds.length === 0) return;
+    if (!quizSession || !currentQuestion || !user || submitted || selectedIds.length === 0) return;
     setSubmitted(true);
     const timeTaken = currentQuestion.timeLimit - timeLeft;
     setAnswerTimes(prev => [...prev, timeTaken]);
-    getSocket().emit("submit-answer", {
+    sendWS("submit-answer", {
       sessionId: quizSession.id, questionId: currentQuestion.id,
-      answerIds: selectedIds, userId: auth.user.id,
+      answerIds: selectedIds, userId: user.id,
     });
-  }, [quizSession, currentQuestion, auth, submitted, selectedIds, timeLeft]);
-
-  // Auto-submit removed — single choice now requires explicit confirmation like multiple choice.
+  }, [quizSession, currentQuestion, user, submitted, selectedIds, timeLeft]);
 
   // ── Loading / Error ──
   if (phase === "LOADING" || !quiz) {
@@ -281,9 +301,6 @@ export default function PlayPage() {
         {/* ══ WAITING ══ */}
         {phase === "WAITING" && (
           <>
-            {/* <div style={{ position: "absolute", width: 500, height: 500, borderRadius: "50%", background: "radial-gradient(circle,rgba(0,119,255,0.25) 0%,transparent 60%)", top: "calc(40% - 250px)", left: "calc(30% - 250px)", filter: "blur(40px)", pointerEvents: "none" }} />
-            <div style={{ position: "absolute", width: 400, height: 400, borderRadius: "50%", background: "radial-gradient(circle,rgba(75,179,75,0.15) 0%,transparent 60%)", top: "calc(60% - 200px)", left: "calc(70% - 200px)", filter: "blur(40px)", pointerEvents: "none" }} /> */}
-
             <div className="play-waiting" style={{ position: "relative", zIndex: 1, flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 48, overflowY: "auto" }}>
               <div className="play-wait-inner" style={{ textAlign: "center", maxWidth: 560, width: "100%" }}>
 
@@ -321,7 +338,6 @@ export default function PlayPage() {
                       width: 460, maxWidth: "100%", margin: "0 auto 32px",
                       borderRadius: 12, overflow: "hidden",
                       background: "#232324", border: "1px solid #363738",
-                      //boxShadow: "0 8px 24px rgba(0,0,0,0.3), inset 0 1px 0 1px rgba(255,255,255,0.04)",
                     }}>
                       {/* Cover */}
                       <div className="play-wait-cover" style={{
@@ -334,7 +350,6 @@ export default function PlayPage() {
                       }}>
                         {quiz.coverImageUrl ? (
                           <>
-                            {/* Blurred backdrop fills the frame so any aspect ratio looks clean */}
                             {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img src={quiz.coverImageUrl} alt="" aria-hidden style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", filter: "blur(24px)", transform: "scale(1.2)" }} />
                             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -578,7 +593,6 @@ export default function PlayPage() {
         {phase === "REVEAL" && currentQuestion && (
           <div className="play-reveal" style={{ flex: 1, display: "flex", flexDirection: "column", padding: "24px 56px 36px" }}>
 
-            {/* Top bar — mirrors the question screen, but the right side shows the result */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
               <div style={{ display: "inline-flex", alignItems: "center", padding: "4px 12px", borderRadius: 999, background: "rgba(0,119,255,0.15)", border: "1px solid rgba(0,119,255,0.3)", fontSize: 13, fontWeight: 600, color: "#71AAEB" }}>
                 Вопрос {qIdx + 1} / {quiz.questions.length}
@@ -594,7 +608,6 @@ export default function PlayPage() {
               </div>
             </div>
 
-            {/* Result strip — points earned + current rank (replaces the timer bar) */}
             <div className="play-result-strip" style={{ display: "flex", alignItems: "stretch", gap: 14, marginBottom: 28 }}>
               <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 12, padding: "13px 20px", background: "#232324", border: "1px solid #363738", borderRadius: 12 }}>
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={roundPoints > 0 ? (isCorrect ? "#4BB34B" : "#FFA000") : "#76787A"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
@@ -624,7 +637,6 @@ export default function PlayPage() {
               )}
             </div>
 
-            {/* Question card — identical to the question screen */}
             {currentQuestion.imageUrl && (
               // eslint-disable-next-line @next/next/no-img-element
               <img
@@ -639,7 +651,6 @@ export default function PlayPage() {
               </div>
             </div>
 
-            {/* Answer tiles — same colorful layout; correct answer highlighted, wrong picks dimmed */}
             <div className="play-answer-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, flex: 1, alignContent: "start" }}>
               {currentQuestion.answers.map((ans, ai) => {
                 const isRight = correctIds.includes(ans.id);
@@ -679,7 +690,6 @@ export default function PlayPage() {
               })}
             </div>
 
-            {/* Footer */}
             <div style={{ marginTop: 16, display: "flex", justifyContent: "center" }}>
               {isLastReveal ? (
                 <button
@@ -736,8 +746,6 @@ export default function PlayPage() {
                     ? (answerTimes.reduce((a, b) => a + b, 0) / answerTimes.length).toFixed(1) : "—";
                   const bestTime = answerTimes.length > 0
                     ? Math.min(...answerTimes).toFixed(1) : "—";
-                  // The third stat depends on the quiz's scoring system: fastest
-                  // answer for the speed bonus, longest correct streak otherwise.
                   const thirdStat = quiz.scoring === "speed"
                     ? { label: "Лучшее время", value: bestTime === "—" ? "—" : `${bestTime} с`, color: "#FFA000" }
                     : { label: "Лучшая серия", value: String(bestStreak), color: "#FFA000" };

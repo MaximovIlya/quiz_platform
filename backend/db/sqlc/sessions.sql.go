@@ -44,6 +44,29 @@ func (q *Queries) DeleteSession(ctx context.Context, id string) error {
 	return err
 }
 
+const getFinishedSessionsByQuizID = `-- name: GetFinishedSessionsByQuizID :many
+SELECT id, quiz_id, room_code, status, started_at, created_at FROM quiz_sessions
+WHERE quiz_id = $1 AND status = 'FINISHED' AND started_at IS NOT NULL
+ORDER BY started_at DESC
+`
+
+func (q *Queries) GetFinishedSessionsByQuizID(ctx context.Context, quizID string) ([]QuizSession, error) {
+	rows, err := q.db.Query(ctx, getFinishedSessionsByQuizID, quizID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []QuizSession
+	for rows.Next() {
+		var i QuizSession
+		if err := rows.Scan(&i.ID, &i.QuizID, &i.RoomCode, &i.Status, &i.StartedAt, &i.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	return items, rows.Err()
+}
+
 const finishSession = `-- name: FinishSession :exec
 UPDATE quiz_sessions SET status = 'FINISHED' WHERE id = $1
 `

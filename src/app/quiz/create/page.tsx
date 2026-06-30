@@ -3,7 +3,8 @@
 import { useState, useEffect, useRef, Suspense } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { signOut, useSession } from "next-auth/react";
+import { useAuth } from "@/context/auth-context";
+import { apiFetch } from "@/lib/api";
 
 const CATEGORIES = ["Engineering", "Internal", "General", "Education", "Entertainment", "Science", "History", "Geography"];
 const CATEGORY_LABELS: Record<string, string> = {
@@ -68,7 +69,7 @@ export default function CreateQuizPage() {
 function CreateQuizPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { data: session } = useSession();
+  const { user, logout } = useAuth();
 
   // When opened with ?id=<quizId> the page edits an existing quiz's details
   // (step 1) instead of creating a new one — this is how the questions screen
@@ -92,7 +93,7 @@ function CreateQuizPageInner() {
 
   useEffect(() => {
     if (!editId) return;
-    fetch(`/api/quiz/${editId}`)
+    apiFetch(`/quiz/${editId}`)
       .then((r) => r.json())
       .then((q) => {
         if (!q || q.error) return;
@@ -126,14 +127,14 @@ function CreateQuizPageInner() {
     }
   }
 
-  const userName = session?.user?.name ?? "Вы";
+  const userName = user?.name ?? "Вы";
   const initials = getInitials(userName);
 
   async function handleSave(andContinue: boolean) {
     if (!title.trim()) return;
     setSaving(true);
     try {
-      const res = await fetch(editId ? `/api/quiz/${editId}` : "/api/quiz", {
+      const res = await apiFetch(editId ? `/quiz/${editId}` : "/quiz/", {
         method: editId ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title, description, category, scoring, difficulty, tags, coverImageUrl }),
@@ -229,7 +230,7 @@ function CreateQuizPageInner() {
                   border: "1px solid #363738", borderRadius: "10px",
                   boxShadow: "0 8px 24px rgba(0,0,0,0.4)", overflow: "hidden",
                 }}>
-                  <button onClick={() => signOut({ callbackUrl: "/login" })} style={{
+                  <button onClick={() => logout()} style={{
                     display: "flex", alignItems: "center", gap: "10px",
                     width: "100%", padding: "11px 14px",
                     background: "none", border: "none",

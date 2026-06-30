@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { signOut } from "next-auth/react";
+import { useAuth } from "@/context/auth-context";
 import QuizLibrary, { type LibraryQuiz } from "./QuizLibrary";
 
 type Quiz = LibraryQuiz;
@@ -39,6 +39,7 @@ function getInitials(name: string) {
 
 export default function OrganizerDashboard({ user, stats, quizzes, activeSession }: Props) {
   const router = useRouter();
+  const { logout } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
 
   // The dashboard is a server component, so the active-session query only runs
@@ -193,7 +194,7 @@ export default function OrganizerDashboard({ user, stats, quizzes, activeSession
                   overflow: "hidden",
                 }}>
                   <button
-                    onClick={() => signOut({ callbackUrl: "/login" })}
+                    onClick={() => logout()}
                     style={{
                       display: "flex", alignItems: "center", gap: "10px",
                       width: "100%", padding: "11px 14px",

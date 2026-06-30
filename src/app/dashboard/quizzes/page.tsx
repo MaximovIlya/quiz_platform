@@ -1,48 +1,60 @@
-export const dynamic = "force-dynamic";
+"use client";
 
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
-import { redirect } from "next/navigation";
-import { prisma } from "@/lib/db";
+import { useEffect, useState } from "react";
+import { useAuth } from "@/context/auth-context";
+import { apiFetch } from "@/lib/api";
 import MyQuizzesView from "../_components/MyQuizzesView";
+import { type LibraryQuiz } from "../_components/QuizLibrary";
 
-export default async function MyQuizzesPage() {
-  const session = await getServerSession(authOptions);
-  if (!session) redirect("/login");
-  if (session.user.needsRoleSelection) redirect("/select-role");
-  // Only organizers own quizzes; participants have no library.
-  if (session.user.role !== "ORGANIZER") redirect("/dashboard");
+type QuizDTO = {
+  id: string;
+  title: string;
+  category: string;
+  difficulty: string;
+  tags: string[];
+  coverImageUrl: string | null;
+  archived: boolean;
+};
 
-  const quizzes = await prisma.quiz.findMany({
-    where: { authorId: session.user.id },
-    include: {
-      _count: { select: { questions: true } },
-      sessions: { select: { startedAt: true, _count: { select: { players: true } } } },
-    },
-    orderBy: { createdAt: "desc" },
-  });
+export default function MyQuizzesPage() {
+  const { user } = useAuth();
+  const [quizzes, setQuizzes] = useState<LibraryQuiz[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const quizzesData = quizzes.map((q) => ({
-    id: q.id,
-    title: q.title,
-    category: q.category,
-    questionCount: q._count.questions,
-    archived: q.archived,
-    difficulty: q.difficulty,
-    tags: q.tags,
-    coverImageUrl: q.coverImageUrl,
-    totalPlays: q.sessions.reduce((sum, s) => sum + s._count.players, 0),
-    lastRun:
-      q.sessions
-        .filter((s) => s.startedAt)
-        .sort((a, b) => (b.startedAt?.getTime() ?? 0) - (a.startedAt?.getTime() ?? 0))[0]
-        ?.startedAt?.toISOString() ?? null,
-  }));
+  useEffect(() => {
+    apiFetch("/quiz/")
+      .then((r) => r.json())
+      .then((data: QuizDTO[]) => {
+        const mapped: LibraryQuiz[] = (data ?? []).map((q) => ({
+          id: q.id,
+          title: q.title,
+          category: q.category,
+          difficulty: q.difficulty,
+          tags: q.tags ?? [],
+          coverImageUrl: q.coverImageUrl ?? null,
+          archived: q.archived,
+          questionCount: 0,
+          totalPlays: 0,
+          lastRun: null,
+        }));
+        setQuizzes(mapped);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, []);
+
+  if (loading) {
+    return (
+      <div style={{ background: "#19191A", minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <span style={{ color: "#909499", fontFamily: "Inter, sans-serif", fontSize: 15 }}>Загружаем…</span>
+      </div>
+    );
+  }
 
   return (
     <MyQuizzesView
-      user={{ name: session.user.name, role: session.user.role }}
-      quizzes={quizzesData}
+      user={{ name: user?.name ?? "Вы", role: user?.role ?? "ORGANIZER" }}
+      quizzes={quizzes}
     />
   );
 }

@@ -23,7 +23,7 @@ func (h *SessionHandler) GetOrCreate(c *fiber.Ctx) error {
 		return toHTTPError(err)
 	}
 
-	return c.Status(fiber.StatusCreated).JSON(sess)
+	return c.Status(fiber.StatusCreated).JSON(mapSessionWithPlayers(sess.QuizSession, sess.Players))
 }
 
 func (h *SessionHandler) Get(c *fiber.Ctx) error {
@@ -34,7 +34,7 @@ func (h *SessionHandler) Get(c *fiber.Ctx) error {
 		return toHTTPError(err)
 	}
 
-	return c.JSON(sess)
+	return c.JSON(mapSessionWithPlayers(sess.QuizSession, sess.Players))
 }
 
 func (h *SessionHandler) Delete(c *fiber.Ctx) error {

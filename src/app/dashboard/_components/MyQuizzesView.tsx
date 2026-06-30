@@ -3,7 +3,7 @@
 import { Suspense, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { signOut } from "next-auth/react";
+import { useAuth } from "@/context/auth-context";
 import QuizLibrary, { type LibraryQuiz } from "./QuizLibrary";
 
 type Props = {
@@ -27,6 +27,7 @@ export default function MyQuizzesView(props: Props) {
 }
 
 function MyQuizzesInner({ user, quizzes }: Props) {
+  const { logout } = useAuth();
   const searchParams = useSearchParams();
   const focusSearch = searchParams.get("focus") === "1";
   const [menuOpen, setMenuOpen] = useState(false);
@@ -125,7 +126,7 @@ function MyQuizzesInner({ user, quizzes }: Props) {
                   boxShadow: "0 8px 24px rgba(0,0,0,0.4)", overflow: "hidden",
                 }}>
                   <button
-                    onClick={() => signOut({ callbackUrl: "/login" })}
+                    onClick={() => logout()}
                     style={{
                       display: "flex", alignItems: "center", gap: "10px",
                       width: "100%", padding: "11px 14px",

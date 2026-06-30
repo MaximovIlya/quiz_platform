@@ -50,7 +50,7 @@ func (h *QuizHandler) Create(c *fiber.Ctx) error {
 		return err
 	}
 
-	return c.Status(fiber.StatusCreated).JSON(quiz)
+	return c.Status(fiber.StatusCreated).JSON(mapQuiz(quiz))
 }
 
 func (h *QuizHandler) GetByID(c *fiber.Ctx) error {
@@ -61,7 +61,7 @@ func (h *QuizHandler) GetByID(c *fiber.Ctx) error {
 		return toHTTPError(err)
 	}
 
-	return c.JSON(quiz)
+	return c.JSON(mapQuizWithQuestions(quiz))
 }
 
 func (h *QuizHandler) ListMine(c *fiber.Ctx) error {
@@ -72,7 +72,11 @@ func (h *QuizHandler) ListMine(c *fiber.Ctx) error {
 		return err
 	}
 
-	return c.JSON(quizzes)
+	result := make([]quizDTO, len(quizzes))
+	for i, q := range quizzes {
+		result[i] = mapQuiz(q)
+	}
+	return c.JSON(result)
 }
 
 func (h *QuizHandler) Update(c *fiber.Ctx) error {
@@ -88,7 +92,7 @@ func (h *QuizHandler) Update(c *fiber.Ctx) error {
 		return toHTTPError(err)
 	}
 
-	return c.JSON(quiz)
+	return c.JSON(mapQuiz(quiz))
 }
 
 func (h *QuizHandler) Delete(c *fiber.Ctx) error {
@@ -133,7 +137,7 @@ func (h *QuizHandler) CreateQuestion(c *fiber.Ctx) error {
 		return toHTTPError(err)
 	}
 
-	return c.Status(fiber.StatusCreated).JSON(q)
+	return c.Status(fiber.StatusCreated).JSON(mapQuestion(q.Question, q.Answers))
 }
 
 func (h *QuizHandler) UpdateQuestion(c *fiber.Ctx) error {
@@ -152,7 +156,7 @@ func (h *QuizHandler) UpdateQuestion(c *fiber.Ctx) error {
 		return toHTTPError(err)
 	}
 
-	return c.JSON(q)
+	return c.JSON(mapQuestion(q.Question, q.Answers))
 }
 
 func (h *QuizHandler) DeleteQuestion(c *fiber.Ctx) error {

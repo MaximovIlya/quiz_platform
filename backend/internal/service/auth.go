@@ -176,6 +176,21 @@ func (s *AuthService) ResetPassword(ctx context.Context, token, newPassword stri
 	return s.store.DeletePasswordResetToken(ctx, token)
 }
 
+type MeResponse struct {
+	ID    string  `json:"id"`
+	Name  string  `json:"name"`
+	Email string  `json:"email"`
+	Role  db.Role `json:"role"`
+}
+
+func (s *AuthService) GetMe(ctx context.Context, userID string) (*MeResponse, error) {
+	user, err := s.store.GetUserByID(ctx, userID)
+	if err != nil {
+		return nil, ErrUserNotFound
+	}
+	return &MeResponse{ID: user.ID, Name: user.Name, Email: user.Email, Role: user.Role}, nil
+}
+
 func (s *AuthService) issueTokens(userID string, role db.Role) (TokenPair, error) {
 	access, err := s.manager.GenerateAccess(userID, role)
 	if err != nil {

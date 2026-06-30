@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { useSession, signOut } from "next-auth/react";
+import { useAuth } from "@/context/auth-context";
+import { apiFetch, clearTokens } from "@/lib/api";
 import { plural } from "@/lib/plural";
 
 type Player = { rank: number; userId: string; name: string; score: number; correct: number; total: number };
@@ -36,14 +37,14 @@ function formatDate(iso: string | null) {
 
 export default function ResultsPage() {
   const params = useParams<{ sessionId: string }>();
-  const { data: auth } = useSession();
+  const { user: auth } = useAuth();
   const router = useRouter();
   const [data, setData] = useState<ResultsData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => {
-    fetch(`/api/results/${params.sessionId}`)
+    apiFetch(`/results/${params.sessionId}`)
       .then(r => r.json())
       .then(d => { if (d.error) setError(d.error); else setData(d); })
       .catch(() => setError("Не удалось загрузить результаты"));
@@ -59,7 +60,7 @@ export default function ResultsPage() {
     );
   }
 
-  const myId = auth?.user?.id;
+  const myId = auth?.id;
   const top3 = [
     data.leaderboard.find(p => p.rank === 2),
     data.leaderboard.find(p => p.rank === 1),
@@ -80,7 +81,7 @@ export default function ResultsPage() {
             <span style={{ fontWeight: 800, fontSize: "20px", letterSpacing: "-0.02em" }}>Pulse</span>
           </div>
           <div style={{ display: "flex", gap: "4px" }}>
-            {(auth?.user?.role === "PARTICIPANT"
+            {(auth?.role === "PARTICIPANT"
               ? [{ label: "Главная", href: "/dashboard" }]
               : [{ label: "Главная", href: "/dashboard" }, { label: "Мои квизы", href: "/dashboard/quizzes" }]
             ).map(({ label, href }) => (
@@ -88,17 +89,17 @@ export default function ResultsPage() {
             ))}
           </div>
         </div>
-        {auth?.user && (
+        {auth && (
           <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-            <div className="nav-role-badge" style={{ padding: "4px 10px", borderRadius: "999px", background: auth.user.role === "PARTICIPANT" ? "rgba(75,179,75,0.12)" : "rgba(0,119,255,0.15)", fontSize: "12px", fontWeight: 600, letterSpacing: "0.02em", textTransform: "uppercase", color: auth.user.role === "PARTICIPANT" ? "#4BB34B" : "#71AAEB" }}>
-              {auth.user.role === "PARTICIPANT" ? "УЧАСТНИК" : "ОРГАНИЗАТОР"}
+            <div className="nav-role-badge" style={{ padding: "4px 10px", borderRadius: "999px", background: auth!.role === "PARTICIPANT" ? "rgba(75,179,75,0.12)" : "rgba(0,119,255,0.15)", fontSize: "12px", fontWeight: 600, letterSpacing: "0.02em", textTransform: "uppercase", color: auth!.role === "PARTICIPANT" ? "#4BB34B" : "#71AAEB" }}>
+              {auth!.role === "PARTICIPANT" ? "УЧАСТНИК" : "ОРГАНИЗАТОР"}
             </div>
             <div style={{ position: "relative" }}>
               <div onClick={() => setMenuOpen(v => !v)} className="nav-user-pill" style={{ display: "flex", alignItems: "center", gap: "10px", padding: "7px 15px 7px 7px", borderRadius: "999px", background: "#2C2D2E", border: "1px solid #363738", cursor: "pointer", userSelect: "none" }}>
-                <div style={{ width: "28px", height: "28px", borderRadius: "14px", background: auth.user.role === "ORGANIZER" ? "linear-gradient(180deg,#0077FF,#005CC4)" : avatarBg(auth.user.name ?? ""), display: "flex", alignItems: "center", justifyContent: "center", fontSize: "12px", fontWeight: 700, color: "#fff", flexShrink: 0 }}>
-                  {initials(auth.user.name ?? "?")}
+                <div style={{ width: "28px", height: "28px", borderRadius: "14px", background: auth!.role === "ORGANIZER" ? "linear-gradient(180deg,#0077FF,#005CC4)" : avatarBg(auth!.name ?? ""), display: "flex", alignItems: "center", justifyContent: "center", fontSize: "12px", fontWeight: 700, color: "#fff", flexShrink: 0 }}>
+                  {initials(auth!.name ?? "?")}
                 </div>
-                <span className="nav-user-name" style={{ fontSize: "14px", fontWeight: 500 }}>{auth.user.name}</span>
+                <span className="nav-user-name" style={{ fontSize: "14px", fontWeight: 500 }}>{auth!.name}</span>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#76787A" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: menuOpen ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.15s" }}>
                   <polyline points="6 9 12 15 18 9" />
                 </svg>
@@ -107,7 +108,7 @@ export default function ResultsPage() {
                 <>
                   <div onClick={() => setMenuOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 20 }} />
                   <div style={{ position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 30, minWidth: "160px", background: "#232324", border: "1px solid #363738", borderRadius: "10px", boxShadow: "0 8px 24px rgba(0,0,0,0.4)", overflow: "hidden" }}>
-                    <button onClick={() => signOut({ callbackUrl: "/login" })} style={{ display: "flex", alignItems: "center", gap: "10px", width: "100%", padding: "11px 14px", background: "none", border: "none", color: "#E64646", fontSize: "14px", fontWeight: 500, cursor: "pointer", textAlign: "left", fontFamily: "Inter, sans-serif" }}>
+                    <button onClick={() => { clearTokens(); window.location.href = "/login"; }} style={{ display: "flex", alignItems: "center", gap: "10px", width: "100%", padding: "11px 14px", background: "none", border: "none", color: "#E64646", fontSize: "14px", fontWeight: 500, cursor: "pointer", textAlign: "left", fontFamily: "Inter, sans-serif" }}>
                       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
                         <polyline points="16 17 21 12 16 7" />
@@ -139,7 +140,7 @@ export default function ResultsPage() {
           </div>
         </div>
         <div className="res-subheader-actions" style={{ display: "flex", gap: 8 }}>
-          {auth?.user?.role !== "PARTICIPANT" && data && (
+          {auth?.role !== "PARTICIPANT" && data && (
             <button onClick={() => router.push(`/quiz/${data.quizId}/run?reset=1`)} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, height: 40, padding: "0 16px", borderRadius: 8, border: "1px solid #363738", background: "#2C2D2E", color: "#E7E8EA", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "Inter, sans-serif" }}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
               Запустить снова

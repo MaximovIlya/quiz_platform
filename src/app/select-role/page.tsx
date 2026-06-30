@@ -2,13 +2,12 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { useSession } from "next-auth/react";
+import { apiFetch } from "@/lib/api";
 
 type Role = "ORGANIZER" | "PARTICIPANT";
 
 export default function SelectRolePage() {
   const router = useRouter();
-  const { update } = useSession();
   const [role, setRole] = useState<Role>("PARTICIPANT");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -18,9 +17,8 @@ export default function SelectRolePage() {
     setLoading(true);
     setError("");
 
-    const res = await fetch("/api/auth/select-role", {
+    const res = await apiFetch("/auth/select-role", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ role }),
     });
 
@@ -30,7 +28,6 @@ export default function SelectRolePage() {
       return;
     }
 
-    await update();
     router.push("/dashboard");
   }
 

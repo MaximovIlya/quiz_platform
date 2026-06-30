@@ -16,6 +16,15 @@ func NewAuthHandler(svc *service.AuthService) *AuthHandler {
 	return &AuthHandler{svc: svc}
 }
 
+func (h *AuthHandler) Me(c *fiber.Ctx) error {
+	userID := c.Locals(middleware.CtxUserID).(string)
+	user, err := h.svc.GetMe(c.Context(), userID)
+	if err != nil {
+		return fiber.ErrNotFound
+	}
+	return c.JSON(user)
+}
+
 func (h *AuthHandler) Register(c *fiber.Ctx) error {
 	var body struct {
 		Email    string `json:"email"`

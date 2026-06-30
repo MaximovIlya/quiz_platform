@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { getSocket, disconnectSocket } from "@/lib/socket";
-import type { Player, AnswerVotes } from "@/types/socket";
+import { apiFetch, getAccessToken } from "@/lib/api";
+import { connectWS, onWS, offWS, sendWS, disconnectWS, isConnectedWS } from "@/lib/ws";
 import { plural } from "@/lib/plural";
 
 type Answer = { id: string; text: string; isCorrect: boolean };
@@ -33,6 +33,9 @@ function avatarColor(name: string) {
   return AVATAR_COLORS[h % AVATAR_COLORS.length];
 }
 
+type Player = { userId: string; name: string; score: number; sessionPlayerID?: string };
+type AnswerVotes = Record<string, number>;
+
 export default function RunQuizPage() {
   const params       = useParams<{ id: string }>();
   const router       = useRouter();
@@ -55,69 +58,79 @@ export default function RunQuizPage() {
 
   const currentQuestion: Question | null = quiz?.questions[qIdx] ?? null;
 
-  // Load quiz + create/get session
+  // Load quiz + create/get session via Go backend
   useEffect(() => {
     if (!params.id) return;
-    // Guard against React Strict Mode invoking this effect twice in dev — a
-    // double run would POST two sessions and leave an orphan WAITING room.
     if (sessionInitRef.current) return;
     sessionInitRef.current = true;
     const reset = searchParams.get("reset") === "1";
+
     Promise.all([
-      fetch(`/api/quiz/${params.id}`).then((r) => r.json()),
-      fetch(`/api/quiz/${params.id}/session`).then((r) => r.json()),
+      apiFetch(`/quiz/${params.id}`).then(r => r.json()),
+      apiFetch(`/quiz/${params.id}/session`).then(r => r.ok ? r.json() : null),
     ]).then(([quizData, sessionData]) => {
-      setQuiz(quizData);
+      // quizData is QuizWithQuestions from Go: { id, title, questions: [{id,text,type,timeLimit,points,answers:[{id,text,isCorrect}],...}] }
+      setQuiz({
+        id: quizData.id,
+        title: quizData.title,
+        questions: (quizData.questions ?? []).map((q: { id: string; text: string; type: string; timeLimit: number; points: number; answers: { id: string; text: string; isCorrect: boolean }[]; order: number; imageUrl?: string | null }) => ({
+          id: q.id, text: q.text, type: q.type, timeLimit: q.timeLimit,
+          points: q.points, answers: q.answers, order: q.order, imageUrl: q.imageUrl,
+        })),
+      });
+
       if (sessionData && sessionData.id && sessionData.status === "FINISHED" && !reset) {
-        // Quiz already finished — redirect to results instead of creating a new session
         router.replace(`/results/${sessionData.id}`);
         return;
       }
       if (sessionData && sessionData.id && sessionData.status !== "FINISHED") {
-        setQuizSession(sessionData);
-        setPlayers(sessionData.players?.map((sp: { user: { id: string; name: string }; score: number; id: string }) => ({
-          userId: sp.user.id, name: sp.user.name, score: sp.score, sessionPlayerId: sp.id,
-        })) ?? []);
+        setQuizSession({ id: sessionData.id, roomCode: sessionData.roomCode, status: sessionData.status });
+        setPlayers((sessionData.players ?? []).map((sp: { userId: string; name: string; score: number; sessionPlayerID: string }) => ({
+          userId: sp.userId, name: sp.name, score: sp.score, sessionPlayerID: sp.sessionPlayerID,
+        })));
       } else {
-        // No session or ?reset=1 — create new session
-        fetch(`/api/quiz/${params.id}/session${reset ? "?reset=1" : ""}`, { method: "POST" })
-          .then((r) => r.json())
-          .then((s) => setQuizSession(s));
+        apiFetch(`/quiz/${params.id}/session`, { method: "POST" })
+          .then(r => r.json())
+          .then(s => setQuizSession({ id: s.id, roomCode: s.roomCode, status: s.status }));
       }
-      // Strip ?reset=1 from the URL once the session is set up. Otherwise, after
-      // the quiz finishes and the organizer presses Back, they'd land on this
-      // page with reset=1 still in the URL and spawn yet another phantom session.
-      // Without reset, a Back navigation onto a FINISHED quiz hits the redirect
-      // to results above instead.
       if (reset) router.replace(`/quiz/${params.id}/run`);
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.id]);
 
-  // Socket.IO
+  // WebSocket
   useEffect(() => {
     if (!quizSession?.id) return;
-    const socket = getSocket();
+    const token = getAccessToken();
+    if (!token) return;
+
+    connectWS(token);
+
     const sessionId = quizSession.id;
 
-    const joinAsOrganizer = () => {
-      socket.emit("organizer-join", { sessionId });
-    };
+    const joinAsOrganizer = () => sendWS("organizer-join", { sessionId });
 
-    // Use `on` (not `once`) so that every reconnect re-joins the room.
-    socket.on("connect", joinAsOrganizer);
-    if (socket.connected) joinAsOrganizer();
+    const onConnect = () => joinAsOrganizer();
+    onWS("connect", onConnect);
+    if (isConnectedWS()) joinAsOrganizer();
 
-    socket.on("player-joined", (player) => {
-      setPlayers((prev) => {
-        if (prev.find((p) => p.userId === player.userId)) return prev;
+    const onPlayerJoined = (player: Player) => {
+      setPlayers(prev => {
+        if (prev.find(p => p.userId === player.userId)) return prev;
         return [...prev, player];
       });
-    });
-    socket.on("player-left", (userId) => {
-      setPlayers((prev) => prev.filter((p) => p.userId !== userId));
-    });
-    socket.on("quiz-started", () => { setPhase("ACTIVE"); setQIdx(0); });
-    socket.on("question-started", ({ questionIndex, endsAt }) => {
+    };
+    onWS("player-joined", onPlayerJoined);
+
+    const onPlayerLeft = (userId: unknown) => {
+      setPlayers(prev => prev.filter(p => p.userId !== userId));
+    };
+    onWS("player-left", onPlayerLeft);
+
+    const onQuizStarted = () => { setPhase("ACTIVE"); setQIdx(0); };
+    onWS("quiz-started", onQuizStarted);
+
+    const onQuestionStarted = ({ questionIndex, endsAt }: { questionIndex: number; endsAt: number }) => {
       if (revealTimerRef.current) { clearInterval(revealTimerRef.current); revealTimerRef.current = null; }
       setPhase("ACTIVE");
       setQIdx(questionIndex);
@@ -132,22 +145,25 @@ export default function RunQuizPage() {
       tick();
       if (timerRef.current) clearInterval(timerRef.current);
       timerRef.current = setInterval(tick, 250);
-    });
-    socket.on("answer-received", ({ votes: v, totalAnswered: t }) => { setVotes(v); setTotalAnswered(t); });
-    socket.on("question-ended", ({ correctAnswerIds, votes: v, questionIndex, isLast }) => {
+    };
+    onWS("question-started", onQuestionStarted);
+
+    const onAnswerReceived = ({ votes: v, totalAnswered: t }: { votes: AnswerVotes; totalAnswered: number }) => {
+      setVotes(v); setTotalAnswered(t);
+    };
+    onWS("answer-received", onAnswerReceived);
+
+    const onQuestionEnded = ({ correctAnswerIds, votes: v, questionIndex, isLast }: { correctAnswerIds: string[]; votes: AnswerVotes; questionIndex?: number; isLast?: boolean }) => {
       if (questionIndex !== undefined) setQIdx(questionIndex);
       setPhase("REVEAL");
       setIsLastReveal(!!isLast);
       setCorrectIds(correctAnswerIds);
       setVotes(v);
       if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-      // The final question doesn't auto-advance — the organizer presses a button
-      // to move on to the results, so skip the countdown timer in that case.
       if (isLast) {
         if (revealTimerRef.current) { clearInterval(revealTimerRef.current); revealTimerRef.current = null; }
         return;
       }
-      // Countdown until auto-advance
       setRevealSecs(5);
       if (revealTimerRef.current) clearInterval(revealTimerRef.current);
       revealTimerRef.current = setInterval(() => {
@@ -156,41 +172,44 @@ export default function RunQuizPage() {
           return prev - 1;
         });
       }, 1000);
-    });
-    socket.on("score-update", (p) => setPlayers(p));
-    socket.on("quiz-finished", (p) => {
+    };
+    onWS("question-ended", onQuestionEnded);
+
+    const onScoreUpdate = (p: Player[]) => setPlayers(p);
+    onWS("score-update", onScoreUpdate);
+
+    const onQuizFinished = (p: Player[]) => {
       setPlayers(p);
       setPhase("FINISHED");
       if (sessionId) router.push(`/results/${sessionId}`);
-    });
+    };
+    onWS("quiz-finished", onQuizFinished);
 
     return () => {
-      socket.off("connect", joinAsOrganizer);
-      socket.off("player-joined"); socket.off("player-left");
-      socket.off("quiz-started"); socket.off("question-started");
-      socket.off("answer-received"); socket.off("question-ended");
-      socket.off("score-update"); socket.off("quiz-finished");
+      offWS("connect", onConnect);
+      offWS("player-joined", onPlayerJoined); offWS("player-left", onPlayerLeft);
+      offWS("quiz-started", onQuizStarted); offWS("question-started", onQuestionStarted);
+      offWS("answer-received", onAnswerReceived); offWS("question-ended", onQuestionEnded);
+      offWS("score-update", onScoreUpdate); offWS("quiz-finished", onQuizFinished);
       if (timerRef.current) clearInterval(timerRef.current);
       if (revealTimerRef.current) clearInterval(revealTimerRef.current);
-      disconnectSocket();
+      disconnectWS();
     };
-  }, [quizSession?.id]);
+  }, [quizSession?.id, router]);
 
   const startQuiz = useCallback(() => {
     if (!quizSession) return;
-    getSocket().emit("start-quiz", { sessionId: quizSession.id });
+    sendWS("start-quiz", { sessionId: quizSession.id });
   }, [quizSession]);
 
-  // After the final question's reveal: tell the server to finish the quiz. The
-  // server responds with `quiz-finished`, whose handler redirects to /results.
   const goToResults = useCallback(() => {
     if (!quizSession) return;
-    getSocket().emit("next-question", { sessionId: quizSession.id });
+    sendWS("next-question", { sessionId: quizSession.id });
   }, [quizSession]);
 
   const endSession = useCallback(async () => {
-    await fetch(`/api/quiz/${params.id}/session`, { method: "DELETE" });
-    disconnectSocket();
+    await apiFetch(`/quiz/${params.id}/session`, { method: "DELETE" });
+    disconnectWS();
     window.location.href = "/dashboard";
   }, [params.id]);
 
@@ -229,7 +248,6 @@ export default function RunQuizPage() {
         borderBottom: "1px solid #363738",
         position: "relative", zIndex: 5,
       }}>
-        {/* Left: Pulse logo + quiz title */}
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <div style={{ width: 28, height: 28, borderRadius: 8, background: "linear-gradient(180deg,#0077FF,#005CC4)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
             <svg width="16" height="11" viewBox="8 11 20 14" fill="none">
@@ -243,7 +261,6 @@ export default function RunQuizPage() {
           </div>
         </div>
 
-        {/* Right */}
         {phase === "WAITING" && (
           <button onClick={endSession} style={{ height: 32, padding: "0 12px", borderRadius: 6, border: "none", background: "transparent", color: "#909499", fontSize: 13, cursor: "pointer", fontFamily: "Inter, sans-serif" }}>
             Завершить сессию
@@ -251,7 +268,7 @@ export default function RunQuizPage() {
         )}
       </header>
 
-      {/* ── Question progress bar (ACTIVE / REVEAL only) ── */}
+      {/* ── Question progress bar ── */}
       {(phase === "ACTIVE" || phase === "REVEAL") && (
         <div style={{ flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 32px", borderBottom: "1px solid #363738", background: "#19191A" }}>
           <div style={{ display: "inline-flex", alignItems: "center", padding: "4px 12px", borderRadius: 999, background: "rgba(0,119,255,0.15)", border: "1px solid rgba(0,119,255,0.3)", fontSize: 13, fontWeight: 600, color: "#71AAEB", fontVariantNumeric: "tabular-nums" }}>
@@ -297,27 +314,21 @@ export default function RunQuizPage() {
         {phase === "WAITING" && (
           <div className="run-waiting-grid" style={{ flex: 1, display: "grid", gridTemplateColumns: "1fr 420px", overflow: "hidden", position: "relative" }}>
 
-            {/* Main waiting area */}
             <div className="run-waiting-main" style={{ padding: "40px 56px", position: "relative", overflow: "hidden", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center" }}>
-              {/* Dot grid */}
               <div style={{ position: "absolute", inset: 0, backgroundImage: "radial-gradient(rgba(255,255,255,0.04) 1px, transparent 1px)", backgroundSize: "24px 24px", pointerEvents: "none", maskImage: "radial-gradient(ellipse at center, black 30%, transparent 80%)", WebkitMaskImage: "radial-gradient(ellipse at center, black 30%, transparent 80%)" }} />
-              {/* Glow blobs */}
               <div style={{ position: "absolute", width: 600, height: 600, borderRadius: "50%", background: "radial-gradient(circle, rgba(0,119,255,0.25) 0%, transparent 60%)", top: "calc(30% - 300px)", left: "calc(30% - 300px)", pointerEvents: "none", filter: "blur(40px)" }} />
               <div style={{ position: "absolute", width: 500, height: 500, borderRadius: "50%", background: "radial-gradient(circle, rgba(75,179,75,0.15) 0%, transparent 60%)", top: "calc(70% - 250px)", left: "calc(70% - 250px)", pointerEvents: "none", filter: "blur(40px)" }} />
 
               <div style={{ position: "relative", zIndex: 1, textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 0 }}>
-                {/* Room live badge */}
                 <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 12px", borderRadius: 999, background: "rgba(75,179,75,0.12)", border: "1px solid rgba(75,179,75,0.3)", marginBottom: 16 }}>
                   <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#4BB34B", display: "inline-block", boxShadow: "0 0 8px #4BB34B" }} />
                   <span style={{ color: "#4BB34B", fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" }}>Комната открыта</span>
                 </div>
 
-                {/* Join at */}
                 <div style={{ fontSize: 22, color: "#909499", marginBottom: 12 }}>
                   Подключайтесь на <span style={{ color: "#E7E8EA", fontWeight: 600 }}>pulse.app/join</span>
                 </div>
 
-                {/* Room code card */}
                 <div className="run-room-code-wrap" style={{
                   display: "inline-flex", gap: 14,
                   padding: "22px 28px",
@@ -344,19 +355,13 @@ export default function RunQuizPage() {
                   ))}
                 </div>
 
-                {/* Action buttons */}
                 <div style={{ display: "flex", gap: 10, justifyContent: "center", marginBottom: 36 }}>
                   <button onClick={copyCode} style={{ display: "flex", alignItems: "center", gap: 8, height: 40, padding: "0 18px", borderRadius: 8, border: "1px solid #363738", background: "#2C2D2E", color: "#E7E8EA", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "Inter, sans-serif" }}>
                     <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="4.5" y="4.5" width="8" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.2"/><path d="M9 4.5V3a1 1 0 0 0-1-1H3a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1h1.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/></svg>
                     {copied ? "Скопировано!" : "Скопировать код"}
                   </button>
-                  {/* <button style={{ display: "flex", alignItems: "center", gap: 8, height: 40, padding: "0 18px", borderRadius: 8, border: "1px solid #363738", background: "#2C2D2E", color: "#E7E8EA", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "Inter, sans-serif" }}>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="3" height="3"/></svg>
-                    Показать QR
-                  </button> */}
                 </div>
 
-                {/* Start button */}
                 <button
                   onClick={startQuiz}
                   disabled={players.length === 0}
@@ -388,9 +393,7 @@ export default function RunQuizPage() {
               </div>
             </div>
 
-            {/* Right: players list */}
             <div className="run-players-panel" style={{ borderLeft: "1px solid #363738", background: "#19191A", display: "flex", flexDirection: "column", overflow: "hidden" }}>
-              {/* Panel header */}
               <div style={{ padding: "20px 24px", borderBottom: "1px solid #363738", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
                 <div>
                   <div style={{ fontSize: 16, fontWeight: 600, color: "#E7E8EA" }}>Игроки</div>
@@ -405,7 +408,6 @@ export default function RunQuizPage() {
                 </div>
               </div>
 
-              {/* Player rows */}
               <div style={{ flex: 1, overflowY: "auto", padding: "16px", display: "flex", flexDirection: "column", gap: 6 }}>
                 {players.length === 0 && (
                   <p style={{ color: "#76787A", fontSize: 13, margin: 0 }}>Ожидаем игроков…</p>
@@ -446,7 +448,6 @@ export default function RunQuizPage() {
           return (
             <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
 
-              {/* Timer bar strip */}
               {phase === "ACTIVE" && (
                 <div className="run-timer-section" style={{ padding: "20px 56px 0", flexShrink: 0 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
@@ -458,12 +459,9 @@ export default function RunQuizPage() {
                 </div>
               )}
 
-              {/* Main content grid */}
               <div className="run-active-body" style={{ flex: 1, padding: "28px 56px 40px", display: "grid", gridTemplateColumns: "1fr 360px", gap: 32, overflow: "hidden" }}>
 
-                {/* Left: question + tiles */}
                 <div className="run-active-left" style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
-                  {/* Meta + question text */}
                   <div style={{ flexShrink: 0, marginBottom: 28 }}>
                     {phase === "REVEAL" && (
                       <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#4BB34B", textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700, marginBottom: 12 }}>
@@ -485,14 +483,13 @@ export default function RunQuizPage() {
                     </div>
                   </div>
 
-                  {/* Answer tiles 2×2 grid */}
                   <div className="run-answer-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, flex: 1, alignContent: "start" }}>
                     {currentQuestion.answers.map((ans, ai) => {
                       const voteCount = votes[ans.id] ?? 0;
                       const votePct = Math.round((voteCount / totalVotes) * 100);
-                      const isCorrect = correctIds.includes(ans.id);
+                      const isCorrectAns = correctIds.includes(ans.id);
                       const isReveal = phase === "REVEAL";
-                      const dimmed = isReveal && !isCorrect;
+                      const dimmed = isReveal && !isCorrectAns;
 
                       return (
                         <div key={ans.id} className="run-answer-tile" style={{
@@ -501,10 +498,10 @@ export default function RunQuizPage() {
                           padding: "28px 120px 28px 88px",
                           display: "flex", alignItems: "center",
                           fontSize: 22, fontWeight: 600, color: "white",
-                          border: isReveal && isCorrect ? "3px solid #4BB34B" : "1px solid rgba(255,255,255,0.08)",
+                          border: isReveal && isCorrectAns ? "3px solid #4BB34B" : "1px solid rgba(255,255,255,0.08)",
                           background: ANS_GRADIENTS[ai % 4],
                           filter: dimmed ? "grayscale(0.7) brightness(0.45)" : "none",
-                          boxShadow: isReveal && isCorrect ? "inset 0 0 32px rgba(75,179,75,0.3)" : "none",
+                          boxShadow: isReveal && isCorrectAns ? "inset 0 0 32px rgba(75,179,75,0.3)" : "none",
                           transition: "filter 0.3s, box-shadow 0.3s, border-color 0.3s",
                         }}>
                           <div className="run-answer-letter" style={{ position: "absolute", left: 20, top: "50%", transform: "translateY(-50%)", width: 52, height: 52, borderRadius: 12, background: "rgba(255,255,255,0.18)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, fontWeight: 800 }}>
@@ -513,7 +510,7 @@ export default function RunQuizPage() {
                           <span style={{ flex: 1, minWidth: 0, overflow: "hidden" }}>{ans.text}</span>
                           <div className="run-answer-stats" style={{ position: "absolute", right: 14, top: 14, bottom: 14, width: 84, display: "flex", flexDirection: "column", alignItems: "flex-end", justifyContent: "space-between", overflow: "hidden" }}>
                             <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
-                              {isReveal && isCorrect && (
+                              {isReveal && isCorrectAns && (
                                 <div style={{ width: 24, height: 24, borderRadius: "50%", background: "white", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4BB34B" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
                                 </div>
@@ -530,7 +527,6 @@ export default function RunQuizPage() {
                   </div>
                 </div>
 
-                {/* Right: live standings card */}
                 <div className="run-leaderboard" style={{ background: "#232324", border: "1px solid #363738", borderRadius: 16, boxShadow: "0 1px 0 rgba(255,255,255,0.04) inset, 0 8px 24px rgba(0,0,0,0.3)", padding: 20, display: "flex", flexDirection: "column", overflow: "hidden" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexShrink: 0 }}>
                     <div style={{ fontSize: 14, fontWeight: 600 }}>Турнирная таблица</div>
@@ -560,7 +556,6 @@ export default function RunQuizPage() {
           );
         })()}
 
-        {/* FINISHED: redirecting to /results/[sessionId] */}
         {phase === "FINISHED" && (
           <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
             <p style={{ color: "#909499", fontFamily: "Inter, sans-serif" }}>Переходим к результатам…</p>

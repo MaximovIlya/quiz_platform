@@ -4,7 +4,8 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter, useParams } from "next/navigation";
-import { signOut, useSession } from "next-auth/react";
+import { useAuth } from "@/context/auth-context";
+import { apiFetch } from "@/lib/api";
 
 type Answer = { id?: string; text: string; isCorrect: boolean };
 type Question = {
@@ -34,7 +35,7 @@ const editQuizCache = new Map<string, Quiz>();
 export default function EditQuestionsPage() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
-  const { data: session } = useSession();
+  const { user, logout } = useAuth();
 
   const cached = params.id ? editQuizCache.get(params.id) : undefined;
   const [quiz, setQuiz] = useState<Quiz | null>(cached ?? null);
@@ -51,7 +52,7 @@ export default function EditQuestionsPage() {
 
   useEffect(() => {
     if (!params.id) return;
-    fetch(`/api/quiz/${params.id}`)
+    apiFetch(`/quiz/${params.id}`)
       .then((r) => r.json())
       .then((data) => { editQuizCache.set(params.id, data); setQuiz(data); setLoading(false); });
   }, [params.id]);
@@ -67,8 +68,8 @@ export default function EditQuestionsPage() {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(async () => {
       setSaving(true);
-      await fetch(`/api/quiz/${params.id}/questions/${q.id}`, {
-        method: "PUT",
+      await apiFetch(`/quiz/${params.id}/questions/${q.id}`, {
+        method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: q.text, type: q.type, imageUrl: q.imageUrl, answers: q.answers, tags: q.tags, timeLimit: q.timeLimit, points: q.points }),
       });
@@ -119,7 +120,7 @@ export default function EditQuestionsPage() {
 
   async function addQuestion() {
     if (!quiz) return;
-    const res = await fetch(`/api/quiz/${params.id}/questions`, {
+    const res = await apiFetch(`/quiz/${params.id}/questions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text: "", type: "SINGLE" }),
@@ -134,7 +135,7 @@ export default function EditQuestionsPage() {
 
   async function deleteQuestion() {
     if (!quiz || !selectedQuestion) return;
-    await fetch(`/api/quiz/${params.id}/questions/${selectedQuestion.id}`, { method: "DELETE" });
+    await apiFetch(`/quiz/${params.id}/questions/${selectedQuestion.id}`, { method: "DELETE" });
     const questions = quiz.questions.filter((_, i) => i !== selectedIdx);
     const newQuiz = { ...quiz, questions };
     setQuiz(newQuiz);
@@ -166,7 +167,7 @@ export default function EditQuestionsPage() {
     );
   }
 
-  const userName = session?.user?.name ?? "Вы";
+  const userName = user?.name ?? "Вы";
   const initials = userName.trim()
     ? userName.trim().split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase()
     : "?";
@@ -254,7 +255,7 @@ export default function EditQuestionsPage() {
                   border: "1px solid #363738", borderRadius: "10px",
                   boxShadow: "0 8px 24px rgba(0,0,0,0.4)", overflow: "hidden",
                 }}>
-                  <button onClick={() => signOut({ callbackUrl: "/login" })} style={{
+                  <button onClick={() => logout()} style={{
                     display: "flex", alignItems: "center", gap: "10px",
                     width: "100%", padding: "11px 14px",
                     background: "none", border: "none",

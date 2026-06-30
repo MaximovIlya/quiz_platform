@@ -2,7 +2,7 @@
 
 import { useRef, useState, useEffect, KeyboardEvent, ClipboardEvent } from "react";
 import { useRouter } from "next/navigation";
-import { signOut } from "next-auth/react";
+import { useAuth } from "@/context/auth-context";
 
 type HistoryEntry = {
   id: string;
@@ -64,6 +64,7 @@ function getInitials(name: string) {
 
 export default function ParticipantDashboard({ user, history, activeSession }: Props) {
   const router = useRouter();
+  const { logout } = useAuth();
   const [code, setCode] = useState<string[]>(Array(6).fill(""));
   const [joining, setJoining] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>("Все");
@@ -217,7 +218,7 @@ export default function ParticipantDashboard({ user, history, activeSession }: P
                   boxShadow: "0 8px 24px rgba(0,0,0,0.4)", overflow: "hidden",
                 }}>
                   <button
-                    onClick={() => signOut({ callbackUrl: "/login" })}
+                    onClick={() => logout()}
                     style={{
                       display: "flex", alignItems: "center", gap: "10px",
                       width: "100%", padding: "11px 14px",
