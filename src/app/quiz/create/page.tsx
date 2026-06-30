@@ -139,7 +139,10 @@ function CreateQuizPageInner() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title, description, category, scoring, difficulty, tags, coverImageUrl }),
       });
-      if (!res.ok) throw new Error("Failed");
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        throw new Error(`${res.status}: ${errBody?.error ?? errBody?.message ?? "Failed"}`);
+      }
       const quiz = await res.json();
       // Keep the cache in sync with what we just saved, so stepping forward to
       // the questions screen and back shows the saved values without a refetch flash.

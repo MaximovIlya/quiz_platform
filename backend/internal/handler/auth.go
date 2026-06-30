@@ -102,11 +102,12 @@ func (h *AuthHandler) SelectRole(c *fiber.Ctx) error {
 	}
 
 	userID := c.Locals(middleware.CtxUserID).(string)
-	if err := h.svc.SelectRole(c.Context(), userID, role); err != nil {
+	tokens, err := h.svc.SelectRole(c.Context(), userID, role)
+	if err != nil {
 		return err
 	}
 
-	return c.SendStatus(fiber.StatusNoContent)
+	return c.JSON(tokens)
 }
 
 func (h *AuthHandler) ForgotPassword(c *fiber.Ctx) error {

@@ -31,6 +31,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const token = getAccessToken();
     if (stored && token) {
       try { setUser(JSON.parse(stored)); } catch { clearTokens(); }
+      // Sync role from server in background (catches stale localStorage)
+      fetch(
+        `${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080"}/api/v1/auth/me`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      ).then((r) => {
+        if (r.ok) r.json().then((me) => {
+          localStorage.setItem("pulse_user", JSON.stringify(me));
+          setUser(me);
+        });
+      }).catch(() => {});
     }
     setLoading(false);
   }, []);

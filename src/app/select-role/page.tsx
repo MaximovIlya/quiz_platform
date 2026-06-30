@@ -28,6 +28,13 @@ export default function SelectRolePage() {
       return;
     }
 
+    // Обновляем профиль в localStorage с новой ролью
+    const meRes = await apiFetch("/auth/me");
+    if (meRes.ok) {
+      const me = await meRes.json();
+      localStorage.setItem("pulse_user", JSON.stringify(me));
+    }
+
     router.push("/dashboard");
   }
 

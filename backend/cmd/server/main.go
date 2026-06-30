@@ -8,6 +8,9 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
+	"github.com/golang-migrate/migrate/v4"
+	_ "github.com/golang-migrate/migrate/v4/database/pgx/v5"
+	"github.com/golang-migrate/migrate/v4/source/iofs"
 
 	"github.com/MaximovIlya/vk_practice_project/internal/auth"
 	"github.com/MaximovIlya/vk_practice_project/internal/handler"
@@ -17,10 +20,16 @@ import (
 	"github.com/MaximovIlya/vk_practice_project/internal/ws"
 	"github.com/MaximovIlya/vk_practice_project/pkg/config"
 	db "github.com/MaximovIlya/vk_practice_project/db/sqlc"
+	"github.com/MaximovIlya/vk_practice_project/db/migrations"
 )
 
 func main() {
 	cfg := config.Load()
+
+	// Run migrations before opening the connection pool
+	if err := runMigrations(cfg.DatabaseURL); err != nil {
+		log.Fatalf("migrate: %v", err)
+	}
 
 	store, err := repository.NewStore(context.Background(), cfg.DatabaseURL)
 	if err != nil {
@@ -99,4 +108,22 @@ func main() {
 	app.Get("/ws", ws.Upgrade, ws.Handler(hub, jwtManager))
 
 	log.Fatal(app.Listen(":" + cfg.Port))
+}
+
+func runMigrations(databaseURL string) error {
+	d, err := iofs.New(migrations.FS, ".")
+	if err != nil {
+		return err
+	}
+	// golang-migrate pgx/v5 driver expects pgx5:// scheme
+	pgxURL := "pgx5://" + databaseURL[len("postgresql://"):]
+	m, err := migrate.NewWithSourceInstance("iofs", d, pgxURL)
+	if err != nil {
+		return err
+	}
+	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
+		return err
+	}
+	log.Println("migrations applied")
+	return nil
 }

@@ -106,12 +106,15 @@ func (s *AuthService) Refresh(ctx context.Context, refreshToken string) (TokenPa
 	return s.issueTokens(user.ID, user.Role)
 }
 
-func (s *AuthService) SelectRole(ctx context.Context, userID string, role db.Role) error {
-	_, err := s.store.UpdateUserRole(ctx, db.UpdateUserRoleParams{
+func (s *AuthService) SelectRole(ctx context.Context, userID string, role db.Role) (TokenPair, error) {
+	user, err := s.store.UpdateUserRole(ctx, db.UpdateUserRoleParams{
 		ID:   userID,
 		Role: role,
 	})
-	return err
+	if err != nil {
+		return TokenPair{}, err
+	}
+	return s.issueTokens(user.ID, user.Role)
 }
 
 type ForgotPasswordResult struct {

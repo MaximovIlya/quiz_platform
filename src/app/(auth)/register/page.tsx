@@ -33,6 +33,12 @@ export default function RegisterPage() {
           body: JSON.stringify({ role: "ORGANIZER" }),
         });
       }
+      // Sync actual profile (with correct role and id) from server
+      const meRes = await apiFetch("/auth/me");
+      if (meRes.ok) {
+        const me = await meRes.json();
+        localStorage.setItem("pulse_user", JSON.stringify(me));
+      }
       router.push("/dashboard");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Что-то пошло не так");

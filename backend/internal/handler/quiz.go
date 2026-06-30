@@ -34,6 +34,10 @@ func (h *QuizHandler) Create(c *fiber.Ctx) error {
 
 	userID := c.Locals(middleware.CtxUserID).(string)
 
+	if body.Tags == nil {
+		body.Tags = []string{}
+	}
+
 	quiz, err := h.svc.Create(c.Context(), service.CreateQuizParams{
 		Title:             body.Title,
 		Description:       body.Description,
@@ -121,6 +125,19 @@ func (h *QuizHandler) CreateQuestion(c *fiber.Ctx) error {
 	}
 
 	userID := c.Locals(middleware.CtxUserID).(string)
+
+	if body.Tags == nil {
+		body.Tags = []string{}
+	}
+	if body.Type == "" {
+		body.Type = db.QuestionTypeSINGLE
+	}
+	if body.TimeLimit == 0 {
+		body.TimeLimit = 30
+	}
+	if body.Points == 0 {
+		body.Points = 1000
+	}
 
 	q, err := h.svc.CreateQuestion(c.Context(), userID, service.CreateQuestionParams{
 		QuizID:    c.Params("id"),
