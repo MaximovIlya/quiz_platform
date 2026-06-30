@@ -127,6 +127,30 @@ func (q *Queries) UpdateUserGoogleID(ctx context.Context, arg UpdateUserGoogleID
 	return i, err
 }
 
+const updateUserPassword = `-- name: UpdateUserPassword :one
+UPDATE users SET password = $2 WHERE id = $1 RETURNING id, email, password, name, role, google_id, created_at
+`
+
+type UpdateUserPasswordParams struct {
+	ID       string  `json:"id"`
+	Password *string `json:"password"`
+}
+
+func (q *Queries) UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) (User, error) {
+	row := q.db.QueryRow(ctx, updateUserPassword, arg.ID, arg.Password)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Password,
+		&i.Name,
+		&i.Role,
+		&i.GoogleID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const updateUserRole = `-- name: UpdateUserRole :one
 UPDATE users SET role = $2 WHERE id = $1 RETURNING id, email, password, name, role, google_id, created_at
 `
