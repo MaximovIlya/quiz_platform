@@ -2,22 +2,20 @@
 
 Веб-приложение для проведения квизов в реальном времени. Организаторы создают квизы и управляют сессиями, участники подключаются по коду комнаты и отвечают на вопросы вживую.
 
-**Демо:** https://vk-practice-project.vercel.app/login
-
 ## Стек технологий
 
 | Слой | Технология |
 |---|---|
 | Frontend | Next.js 14 (App Router), React 18, Tailwind CSS |
-| Backend | Next.js API Routes, Socket.IO |
-| База данных | PostgreSQL + Prisma ORM |
-| Аутентификация | NextAuth.js (JWT, Google OAuth) |
+| Backend | Go (Fiber v2), WebSocket (gofiber/websocket) |
+| База данных | PostgreSQL + sqlc |
+| Аутентификация | JWT (access + refresh токены) |
 | Хранилище файлов | Vercel Blob |
 
 ## Возможности
 
 **Организатор**
-- Регистрация и вход (email/пароль или Google)
+- Регистрация и вход (email / пароль)
 - Создание квиза: название, категория, сложность, теги, обложка
 - Добавление вопросов: текст или изображение, одиночный / множественный выбор, таймер и баллы на вопрос
 - Запуск сессии — генерация 6-значного кода комнаты
@@ -27,43 +25,52 @@
 **Участник**
 - Регистрация и вход
 - Подключение к активному квизу по коду комнаты
-- Ответы на вопросы в режиме реального времени (ответ принимается только пока вопрос активен)
+- Ответы на вопросы в режиме реального времени
 - Просмотр лидерборда по завершении квиза
-- Личный кабинет: история участия и набранные баллы
 
 ## Запуск
 
 ### Требования
 - Node.js 18+
+- Go 1.22+
 - PostgreSQL
 
-### Установка
+### Backend
 
 ```bash
-git clone <repo-url>
-cd vk_practice
+cd backend
+```
+
+Создайте файл `backend/.env`:
+
+```env
+DATABASE_URL=postgresql://user:password@localhost:5432/pulse_db
+JWT_SECRET=your-secret-key
+PORT=8080
+JWT_ACCESS_TTL=15m
+JWT_REFRESH_TTL=168h
+```
+
+Запустить (миграции применяются автоматически при старте):
+
+```bash
+go run ./cmd/server/main.go
+```
+
+### Frontend
+
+```bash
 npm install
 ```
 
-Создайте файл `.env`:
+Создайте файл `.env.local`:
 
 ```env
-DATABASE_URL=postgresql://user:password@localhost:5432/quiz_db
-NEXTAUTH_SECRET=your-secret-key
-NEXTAUTH_URL=http://localhost:3000
-
-# Google OAuth (опционально)
-GOOGLE_CLIENT_ID=...
-GOOGLE_CLIENT_SECRET=...
-
-# Vercel Blob (для загрузки изображений)
-BLOB_READ_WRITE_TOKEN=...
+NEXT_PUBLIC_API_URL=http://localhost:8080
+NEXT_PUBLIC_WS_URL=ws://localhost:8080
 ```
 
-Применить миграции и запустить:
-
 ```bash
-npx prisma migrate dev
 npm run dev
 ```
 
@@ -72,33 +79,38 @@ npm run dev
 ## Структура проекта
 
 ```
-vk_practice/
-├── prisma/
-│   └── schema.prisma          # Модели БД
-├── public/
-│   └── uploads/               # Загруженные изображения
-├── src/
-│   ├── app/                   # Next.js App Router
-│   │   ├── (auth)/login/      # Вход
-│   │   ├── (auth)/register/   # Регистрация
-│   │   ├── dashboard/         # Личный кабинет
-│   │   ├── quiz/create/       # Создание квиза
-│   │   ├── quiz/[id]/edit/    # Редактирование квиза
-│   │   ├── quiz/[id]/run/     # Проведение квиза (организатор)
-│   │   ├── play/[code]/       # Участие в квизе
-│   │   └── results/[sessionId]/ # Результаты сессии
-│   ├── components/            # UI-компоненты
-│   ├── lib/                   # Prisma client, NextAuth config, Socket.IO helper
-│   └── server/                # Socket.IO сервер
-├── server.ts                  # Кастомный Node-сервер (Next.js + Socket.IO)
-└── .env                       # Переменные окружения (не коммитится)
+.
+├── backend/
+│   ├── cmd/server/        # Точка входа, роуты
+│   ├── db/
+│   │   ├── migrations/    # SQL-миграции (golang-migrate)
+│   │   ├── query/         # SQL-запросы (sqlc)
+│   │   └── sqlc/          # Сгенерированный Go-код
+│   ├── internal/
+│   │   ├── auth/          # JWT manager
+│   │   ├── handler/       # HTTP-хендлеры + DTO
+│   │   ├── middleware/     # Auth, RequireRole
+│   │   ├── repository/    # Store (обёртка над sqlc)
+│   │   ├── service/       # Бизнес-логика
+│   │   └── ws/            # WebSocket hub и клиенты
+│   └── pkg/config/        # Конфигурация из .env
+└── src/
+    ├── app/               # Next.js App Router
+    │   ├── (auth)/        # Вход, регистрация
+    │   ├── dashboard/     # Личный кабинет
+    │   ├── quiz/          # Создание, редактирование, запуск
+    │   ├── play/[code]/   # Участие в квизе
+    │   └── results/       # Результаты сессии
+    ├── context/           # AuthProvider (JWT)
+    └── lib/               # apiFetch, WebSocket client (ws.ts)
 ```
 
 ## WebSocket события
 
 | Событие | Направление | Описание |
 |---|---|---|
-| `join-room` | клиент → сервер | Участник входит в сессию по коду |
+| `join-room` | клиент → сервер | Участник входит в сессию |
+| `organizer-join` | организатор → сервер | Организатор подключается к комнате |
 | `start-quiz` | организатор → сервер | Начало квиза |
 | `next-question` | организатор → сервер | Следующий вопрос |
 | `submit-answer` | участник → сервер | Отправка ответа |
@@ -109,8 +121,12 @@ vk_practice/
 ## Скрипты
 
 ```bash
-npm run dev    # Запуск в режиме разработки (tsx server.ts)
-npm run build  # Сборка (migrate deploy + prisma generate + next build)
-npm run start  # Запуск production-сборки
-npm run lint   # ESLint
+# Frontend
+npm run dev      # Режим разработки
+npm run build    # Production-сборка
+npm run lint     # ESLint
+
+# Backend
+go run ./cmd/server/main.go   # Запуск
+go build ./...                # Проверка сборки
 ```
